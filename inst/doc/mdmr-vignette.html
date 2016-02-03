@@ -10,7 +10,7 @@
 
 <meta name="author" content="Daniel McArtor" />
 
-<meta name="date" content="2016-01-27" />
+<meta name="date" content="2016-02-03" />
 
 <title>Using the MDMR Package</title>
 
@@ -54,7 +54,7 @@ code > span.er { color: #ff0000; font-weight: bold; }
 <div id="header">
 <h1 class="title">Using the MDMR Package</h1>
 <h4 class="author"><em>Daniel McArtor</em></h4>
-<h4 class="date"><em>2016-01-27</em></h4>
+<h4 class="date"><em>2016-02-03</em></h4>
 </div>
 
 
@@ -75,11 +75,11 @@ D &lt;-<span class="st"> </span><span class="kw">dist</span>(Y.mdmr, <span class
 <p>The simplest approach is to pass the matrix of predictors and distance matrix outcome (either as a <em>dist</em> object or a matrix) to the function <em>mdmr</em>,</p>
 <pre class="sourceCode r"><code class="sourceCode r">mdmr.res &lt;-<span class="st"> </span><span class="kw">mdmr</span>(<span class="dt">X =</span> X.mdmr, <span class="dt">D =</span> D)
 <span class="kw">summary</span>(mdmr.res)</code></pre>
-<pre><code>##         Statistic Pseudo.R2    p.value
-## Omnibus    0.1514    0.1315 &lt; 2.22e-16
-## V1         0.0629    0.0546 9.4813e-14
-## V2         0.0249    0.0217 3.2038e-06
-## V3         0.0685    0.0594 5.5511e-15</code></pre>
+<pre><code>##         Statistic Pseudo R2 Analytic p-value
+## Omnibus    0.1514    0.1315          &lt; 1e-20
+## V1         0.0629    0.0546          &lt; 1e-13
+## V2         0.0249    0.0217       3.2038e-06
+## V3         0.0685    0.0594          &lt; 1e-13</code></pre>
 <p>The output is a data frame comprised of three columns and <span class="math">\(p+1\)</span>, in this case four, rows. The first column provides the test statistic for the omnibus effect of all predictors on the distance matrix (first row) and the conditional effects of each predictor (remaining rows). The second column lists the omnibus and conditional pseudo-<span class="math">\(R^2\)</span> statistics, which are defined as the proportion of total sums of squares of <span class="math">\(\mathbf{D}\)</span> attributable to each corresponding effect. The third column lists the analytical <em>p</em>-value corresponding to that predictor.</p>
 </div>
 <div id="option-b-passing-gowers-trannsformed-distance-matrix" class="section level3">
@@ -91,11 +91,11 @@ G &lt;-<span class="st"> </span><span class="kw">gower</span>(D)
 lambda &lt;-<span class="st"> </span><span class="kw">eigen</span>(G, <span class="dt">only.values =</span> T)$values
 mdmr.res2 &lt;-<span class="st"> </span><span class="kw">mdmr</span>(<span class="dt">X =</span> X.mdmr, <span class="dt">G =</span> G, <span class="dt">lambda =</span> lambda)
 <span class="kw">summary</span>(mdmr.res2)</code></pre>
-<pre><code>##         Statistic Pseudo.R2    p.value
-## Omnibus    0.1514    0.1315 &lt; 2.22e-16
-## V1         0.0629    0.0546 9.4813e-14
-## V2         0.0249    0.0217 3.2038e-06
-## V3         0.0685    0.0594 5.5511e-15</code></pre>
+<pre><code>##         Statistic Pseudo R2 Analytic p-value
+## Omnibus    0.1514    0.1315          &lt; 1e-20
+## V1         0.0629    0.0546          &lt; 1e-13
+## V2         0.0249    0.0217       3.2038e-06
+## V3         0.0685    0.0594          &lt; 1e-13</code></pre>
 <pre class="sourceCode r"><code class="sourceCode r"><span class="co"># --- Output the eigenvalues of G using the first call to mdmr() and pass them to</span>
 <span class="co"># --- subsequent calls</span>
 <span class="co"># Generate a hypothetical additional predictor we want to test first</span>
@@ -105,11 +105,11 @@ mdmr.tmp &lt;-<span class="st"> </span><span class="kw">mdmr</span>(<span class=
 lambda &lt;-<span class="st"> </span>mdmr.tmp$lambda
 mdmr.res3 &lt;-<span class="st"> </span><span class="kw">mdmr</span>(<span class="dt">X =</span> X.mdmr, <span class="dt">G =</span> G, <span class="dt">lambda =</span> lambda)
 <span class="kw">summary</span>(mdmr.res3)</code></pre>
-<pre><code>##         Statistic Pseudo.R2    p.value
-## Omnibus    0.1514    0.1315 &lt; 2.22e-16
-## V1         0.0629    0.0546 9.4813e-14
-## V2         0.0249    0.0217 3.2038e-06
-## V3         0.0685    0.0594 5.5511e-15</code></pre>
+<pre><code>##         Statistic Pseudo R2 Analytic p-value
+## Omnibus    0.1514    0.1315          &lt; 1e-20
+## V1         0.0629    0.0546          &lt; 1e-13
+## V2         0.0249    0.0217       3.2038e-06
+## V3         0.0685    0.0594          &lt; 1e-13</code></pre>
 <p>All three approaches yield identical results. While the method in Section 1.1 is more convenient, it may add avoidable computation time if <span class="math">\(n\)</span> is large, and differentiating between the methods illustrated in Section 1.2 is simply a question of user preference.</p>
 </div>
 </div>
