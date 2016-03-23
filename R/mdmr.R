@@ -183,8 +183,18 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     G <- gower(D)
   }
 
+  # Remove observations that are misxing on X
+  X.na <- which(rowSums(is.na(as.matrix(X))) > 0)
+  if(length(X.na) > 0){
+    X <- X[-X.na,]
+    G <- G[-X.na, -X.na]
+    warning(paste0(length(X.na),
+                   ' observations removed due to missingness on X.'))
+  }
+
 
   # ======================= Omnibus Test Statistic =========================== #
+
   # Handle potential factors, no-named variables
   X <- stats::model.matrix(~ . , data = as.data.frame(X))
   xnames <- colnames(X)
@@ -199,28 +209,9 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
 
   # Computational trick: H is idempotent, so H = HH. tr(ABC) = tr(CAB), so
   # tr(HGH) = tr(HHG) = tr(HG). Also, tr(AB) = vec(A)'vec(B), so
-  vh <- matrix(H, nrow = 1)
-  vg <- matrix(G, ncol = 1)
-
-  # -- Do the computation in chunks to not overload memory -- #
-  # (This approach is also faster than doing the whole multiplication at once)
-  len <- ncol(vh)
-  # minimum chunk size is 3000^2 or n^2. Even my personal laptop has no problems
-  # with this size
-  chunksize <- min(len, 3000^2)
-  # Set number of chunks, and make sure the last chunk isn't too big or small
-  nchunk <- ceiling(len/chunksize)
-  chunkEnd <- seq(chunksize, nchunk*chunksize, chunksize)
-  chunkEnd[nchunk] <- len
-
-  # Start the computation then iterate over all chunks
-  numer <- vh[,1:chunksize] %*% vg[1:chunksize,]
-  if(nchunk>1){
-    for(i in 2:nchunk){
-      ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-      numer <- numer + vh[,ind] %*% vg[ind,]
-    }
-  }
+  vh <- c(H)
+  vg <- c(G)
+  numer <- crossprod(vh, vg)
 
   # Numerical trick: tr((I-H)G(I-H)) = tr(G) - tr(HGH), so
   trG <- sum(diag(G))
@@ -241,19 +232,12 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     Hs <- lapply(2:(p+1), function(k){
       Xs <- X[,-k]
       Hs <- tcrossprod(tcrossprod(Xs, solve(crossprod(Xs))), Xs)
-      matrix(H - Hs, nrow = 1)
+      c(H - Hs)
     })
 
     # Compute SSD due to conditional effect
     numer.x <- unlist(lapply(Hs, function(vhs){
-      numer <- vhs[,1:chunksize] %*% vg[1:chunksize,]
-      if(nchunk>1){
-        for(i in 2:nchunk){
-          ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-          numer <- numer + vhs[,ind] %*% vg[ind,]
-        }
-      }
-      numer
+      crossprod(vhs, vg)
     }))
 
     # Rescale to get either test statistic or pseudo r-square
@@ -268,7 +252,7 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     Hs <- parallel::mclapply(2:(p+1), function(k){
       Xs <- X[,-k]
       Hs <- tcrossprod(tcrossprod(Xs, solve(crossprod(Xs))), Xs)
-      matrix(H - Hs, nrow = 1)
+      c(H - Hs)
     },
     mc.preschedule = TRUE, mc.set.seed = TRUE,
     mc.silent = FALSE, mc.cores = ncores,
@@ -276,14 +260,7 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
 
     # Compute SSD due to conditional effect
     numer.x <- unlist(parallel::mclapply(Hs, function(vhs){
-      numer <- vhs[,1:chunksize] %*% vg[1:chunksize,]
-      if(nchunk>1){
-        for(i in 2:nchunk){
-          ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-          numer <- numer + vhs[,ind] %*% vg[ind,]
-        }
-      }
-      numer
+      crossprod(vhs, vg)
     },
     mc.preschedule = TRUE, mc.set.seed = TRUE,
     mc.silent = FALSE, mc.cores = ncores,
@@ -297,9 +274,9 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
 
   # --- Combine test statistics and pseudo R-squares --- #
   stat <- data.frame('stat' = c(f.omni, f.x),
-                     row.names = c('Omnibus', xnames[-1]))
+                     row.names = c('Omnibus Effect', xnames[-1]))
   pr2 <- data.frame('pseudo.Rsq' = c(pr2.omni, pr2.x),
-                    row.names = c('Omnibus', xnames[-1]))
+                    row.names = c('Omnibus Effect', xnames[-1]))
 
 
   # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -348,6 +325,16 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     # Compute the eigenvalues of G if they were not provided
     if(is.null(lambda)){
       lambda <- eigen(G, only.values = T)$values
+    }
+
+    # Compute adjusted sample size
+    n.tilde <- (n-p-1) * lambda[1] / sum(lambda)
+    if(n.tilde < 75){
+      warning(
+        paste0('Adjusted sample size = ', round(n.tilde), '\n',
+               'Asymptotic properties of the null distribution may not hold.\n',
+               'This can result in overly conservative p-values.\n',
+               'Permutation tests are recommended.'))
     }
 
     # Initiailze accuracy of the Davies algorithm
@@ -412,9 +399,9 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
 
 
     pv <- data.frame('analytic.pvals' = c(pv.omni, pv.x),
-                     row.names = c('Omnibus', xnames[-1]))
+                     row.names = c('Omnibus Effect', xnames[-1]))
     pv.acc <- data.frame('p.max.error' = c(acc.omni, acc.x),
-                         row.names = c('Omnibus', xnames[-1]))
+                         row.names = c('Omnibus Effect', xnames[-1]))
 
     # Overwrite nperm to show no permutations were done
     nperm <- NA
@@ -435,14 +422,8 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
 
       # OMNIBUS
       H.perm <- tcrossprod(tcrossprod(X.perm, solve(crossprod(X.perm))), X.perm)
-      vh.perm <- matrix(H.perm, nrow = 1)
-      numer.perm <- vh.perm[,1:chunksize] %*% vg[1:chunksize,]
-      if(nchunk>1){
-        for(i in 2:nchunk){
-          ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-          numer.perm <- numer.perm + vh.perm[,ind] %*% vg[ind,]
-        }
-      }
+      vh.perm <- c(H.perm)
+      numer.perm <- crossprod(vh.perm, vg)
       denom.perm <- trG - numer.perm
       f.omni.perm <- numer.perm / denom.perm
 
@@ -451,18 +432,11 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
         Xs.perm <- X.perm[,-k]
         Hs.perm <- tcrossprod(
           tcrossprod(Xs.perm, solve(crossprod(Xs.perm))), Xs.perm)
-        matrix(H.perm - Hs.perm, nrow = 1)
+        c(H.perm)
       })
 
       numer.x.perm <- unlist(lapply(Hs.perm, function(vhs.perm){
-        numer.perm <- vhs.perm[,1:chunksize] %*% vg[1:chunksize,]
-        if(nchunk>1){
-          for(i in 2:nchunk){
-            ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-            numer.perm <- numer.perm + vhs.perm[,ind] %*% vg[ind,]
-          }
-        }
-        numer.perm
+        crossprod(vhs.perm, vg)
       }))
 
       f.x.perm <- numer.x.perm / denom.perm
@@ -541,7 +515,7 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     pv.omni <- perm.geq.obs[1] / nperm
     pv.x <- perm.geq.obs[-1] / nperm
     pv <- data.frame('perm.pvals' = c(pv.omni, pv.x),
-                     row.names = c('Omnibus', xnames[-1]))
+                     row.names = c('Omnibus Effect', xnames[-1]))
 
 
     # --- Standard Error --- #
@@ -552,7 +526,7 @@ mdmr <- function(X, D = NULL, G = NULL, lambda = NULL, return.lambda = F,
     acc.omni <- sqrt((pv.omni.hold * (1-pv.omni.hold)) / nperm)
     acc.x <- sqrt((pv.x.hold * (1-pv.x.hold)) / nperm)
     pv.acc <- data.frame('perm.p.SE' = c(acc.omni, acc.x),
-                         row.names = c('Omnibus', xnames[-1]))
+                         row.names = c('Omnibus Effect', xnames[-1]))
     rm(pv.omni.hold, pv.x.hold)
 
     # --- Fill in LAMBDA with a note if it was requested --- #
@@ -624,7 +598,7 @@ print.mdmr <- function(x, ...){
 #' @param object Output from \code{mdmr}
 #' @param ... Further arguments passed to or from other methods.
 #'
-#' @return An object with six elements and a summary function. Calling
+#' @return Calling
 #' \code{summary(mdmr.res)} produces a data frame comprised of:
 #' \item{Statistic}{Value of the corresponding MDMR test statistic}
 #' \item{Pseudo R2}{Size of the corresponding effect on the
@@ -710,7 +684,38 @@ summary.mdmr <- function(object, ...){
                           'p-value' = object$pv)
     names(print.res) <- names(out.res) <- c('Statistic', 'Pseudo R2', pv.name)
   }
+
+
+
+  # Add significance codes to p-values
+  print.res <- data.frame(print.res, NA)
+  for(k in 1:4){
+    print.res[,k] <- paste(print.res[,k])
+  }
+  names(print.res)[4] <- ''
+  for(l in 1:nrow(print.res)){
+    if(object$pv[l,1] > 0.1){
+      print.res[l,4] <- '   '
+    }
+    if((object$pv[l,1] <= 0.1) & (object$pv[l,1] > 0.05)){
+      print.res[l,4] <- '.  '
+    }
+    if((object$pv[l,1] <= 0.05) & (object$pv[l,1] > 0.01)){
+      print.res[l,4] <- '*  '
+    }
+    if((object$pv[l,1] <= 0.01) & (object$pv[l,1] > 0.001)){
+      print.res[l,4] <- '** '
+    }
+    if(object$pv[l,1] <= 0.001){
+      print.res[l,4] <- '***'
+    }
+  }
+
+
   print(print.res)
+  cat('---', fill = T)
+  cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1")
+
   invisible(out.res)
 }
 
@@ -761,14 +766,20 @@ summary.mdmr <- function(object, ...){
 #' to compute delta. The final result is the average of all \code{niter}
 #' iterations. Higher values of \code{niter} require more computation time, but
 #' result in more precise estimates.
+#' @param x.inds Vector indicating which columns of X should have their
+#' conditional effect sizes computed. Default value of \code{NULL} results in
+#' all effects being computed, and a value of \code{0} results in no conditional
+#' effects being computed, such that only the omnibus effect sizes will be
+#' reported.
+#' @param y.inds Vector indicating which columns of Y effect sizes should be
+#' computed on. Default value of \code{NULL} results in all columns being
+#' used.
 #' @param G Gower's centered similarity matrix computed from \code{D}.
 #' Either \code{D} or \code{G} must be passed to \code{mdmr()}.
 #' @param G.list List of length \eqn{q} where the \eqn{i^{th}}
 #' element contains the \code{G} matrix computed from distance a matrix that
 #' was computed on a version of \code{Y} where the \eqn{i^{th}}
 #' column has been randomly permuted.
-#' @param plot.res Logical; Indicates whether or not a heat-map of the results
-#' should be plotted.
 #' @param ncores Integer; if \code{ncores} > 1, the \code{\link{parallel}}
 #' package is used to speed computation. Note: Windows users must set
 #' \code{ncores = 1} because the \code{parallel} pacakge relies on forking. See
@@ -776,6 +787,15 @@ summary.mdmr <- function(object, ...){
 #' \code{parallel} pacakge for more details.
 #' @param seed Integer; sets seed for the permutations of each variable
 #' comprising Y so that results can be replicated.
+#' @param plot.res Logical; Indicates whether or not a heat-map of the results
+#' should be plotted.
+#' @param grayscale Logical; Indicates whether or not the heat-map should be
+#' plotted in grayscale.
+#' @param cex Multiplier for cex.axis, cex.lab, cex.main, and cex that are
+#' passed to the plotted result.
+#' @param y.las Orientation of labels for the outcome items. Defaults to
+#' vertical (2). Value of 1 prints horizontal labels, and is only recommended
+#' if the multivariate outcome is comprised of few variables.
 #'
 #' @return A data frame whose rows correspond to the omnibus effects and the
 #' effect of each individual predictor (conditional on the rest), and whose
@@ -813,8 +833,9 @@ summary.mdmr <- function(object, ...){
 #' @export
 #' @importFrom parallel mclapply
 delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
-                  G = NULL, G.list = NULL, plot.res = F,
-                  ncores = 1, seed = NULL){
+                  x.inds = NULL, y.inds = NULL,
+                  G = NULL, G.list = NULL, ncores = 1, seed = NULL,
+                  plot.res = F, grayscale = F, cex = 1, y.las = 2){
   # ============================================================================
   # Step 1: Check input type
   # ============================================================================
@@ -832,6 +853,9 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
   if(!is.null(G.list)){
     # Set the method to list (see below)
     method <- 'list'
+    if(!is.null(y.inds)){
+      warning('y.inds is ignored if G.list is supplied.')
+    }
   }
 
   # Handle potential factors, no-named variables
@@ -840,6 +864,9 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
   p <- ncol(X)
   n <- nrow(X)
 
+  # Which variables are to be tested?
+  if(is.null(x.inds)){x.inds <- 1:p}
+  if(any(x.inds > p)){stop(paste0('x.inds must be between 1 and ncol(X)'))}
 
   # ============================================================================
   # Step 2: Function to compute pseudo R-square (it's done a lot here with the
@@ -850,25 +877,33 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
   # Overall hat matrix
   X.hat <- cbind(1, X)
   H <- tcrossprod(tcrossprod(X.hat, solve(crossprod(X.hat))), X.hat)
-  vh <- matrix(H, nrow = 1)
+  vh <- c(H)
 
-  # Do the computation in chunks to not overload memory
-  len <- ncol(vh)
-  chunksize <- min(len, 3000^2)
-  nchunk <- ceiling(len/chunksize)
-  chunkEnd <- seq(chunksize, nchunk*chunksize, chunksize)
-  chunkEnd[nchunk] <- len
+  # Hat matrices for each conditional effect that we're testing
+  if(all(x.inds != 0)){x.inds <- x.inds + 1}
 
-  # Hat matrices for each conditional effect
-  Xs <- lapply(2:(p+1), function(i){
-    X.hat[,-i]
-  })
-  Hs <- lapply(Xs, function(x){
-    H - tcrossprod(tcrossprod(x, solve(crossprod(x))), x)
-  })
-  vhs <- lapply(Hs, function(h){
-    matrix(h, nrow = 1)
-  })
+  # Populate
+  if(ncores == 1){
+    vhs <- lapply(2:(p+1), FUN = function(i){
+      hh <- NA
+      if(i %in% x.inds){
+        xx <- X.hat[,-i]
+        hh <- H - tcrossprod(tcrossprod(xx, solve(crossprod(xx))), xx)
+      }
+      c(hh)
+    })
+  }
+  if(ncores > 1){
+    vhs <- parallel::mclapply(2:(p+1), mc.cores = ncores, FUN = function(i){
+      hh <- NA
+      if(i %in% x.inds){
+        xx <- X.hat[,-i]
+        hh <- H - tcrossprod(tcrossprod(xx, solve(crossprod(xx))), xx)
+      }
+      c(hh)
+    })
+  }
+
 
   # ----- FUNCTION TO COMPUTE PSEUDO-R-SQUARE WITHIN THIS RUN OF DELTA ----- #
 
@@ -877,15 +912,8 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
     # =========================== Omnibus Test =============================== #
     # Computational trick: H is idempotent, so H = HH. tr(ABC) = tr(CAB), so
     # tr(HGH) = tr(HHG) = tr(HG). Also, tr(AB) = vec(A)'vec(B), so
-    vg <- matrix(G, ncol = 1)
-    # Start the computation then iterate over all chunks
-    numer <- vh[,1:chunksize] %*% vg[1:chunksize,]
-    if(nchunk>1){
-      for(i in 2:nchunk){
-        ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-        numer <- numer + vh[,ind] %*% vg[ind,]
-      }
-    }
+    vg <- c(G)
+    numer <- crossprod(vh, vg)
 
     # pseudo-R2 is defined as tr(HGH)/tr(G), so
     denom <- sum(diag(G))
@@ -895,21 +923,18 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
 
     # ===================== Tests of Each Predictor ========================== #
     numer.x <- unlist(lapply(1:p, function(k){
-      numer <- vhs[[k]][,1:chunksize] %*% vg[1:chunksize,]
-      if(nchunk>1){
-        for(i in 2:nchunk){
-          ind <- (chunkEnd[i-1]+1):chunkEnd[i]
-          numer <- numer + vhs[[k]][,ind] %*% vg[ind,]
-        }
+      num <- NA
+      if(k %in% (x.inds-1)){
+        num <- crossprod(vhs[[k]], vg)
       }
-      numer
+      num
     }))
 
     r2.x <- numer.x / denom
 
     # ====================== Return Results =========================== #
     res <- c(res, r2.x)
-    names(res) <- c('Omnibus', xnames)
+    names(res) <- c('Omnibus Effect', xnames)
     return(res)
   }
 
@@ -920,14 +945,14 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
     # ----- Manage Input ----- #
     Y <- as.matrix(Y)
     q <- ncol(Y)
+    if(is.null(y.inds)){y.inds <- 1:q}
+    if(any(y.inds > q)){stop(paste0('y.inds must be between 1 and ncol(Y)'))}
     ynames <- colnames(data.frame(Y))
     if(all(ynames == paste0('X', 1:q))){
       ynames <- paste0('Y', 1:q)
     }
 
     G <- gower(stats::dist(Y, method = dtype))
-
-    n <- nrow(X)
 
     # ----- Populate delta matrices using jackknife procedure ----- #
     # Get the "real" pseudo R-square
@@ -948,12 +973,16 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
                    y.jack[,k] <- sample(y.jack[,k], size = n, replace = F)
                    y.jack
                  })
-                 res <- lapply(jackknifed.y, function(yy){
-                   GG <- gower(stats::dist(yy, method = dtype))
-                   pseudo.r2(GG)
+                 res <- lapply(1:q, function(k){
+                   pr2.jack <- rep(NA, p+1)
+                   if(k %in% y.inds){
+                     GG <- gower(stats::dist(jackknifed.y[[k]], method = dtype))
+                     pr2.jack <- pseudo.r2(GG)
+                   }
+                   pr2.jack
                  })
                  res <- matrix(unlist(res), nrow = p+1, ncol = q)
-                 dimnames(res) <- list(c('Omnibus', xnames),
+                 dimnames(res) <- list(c('Omnibus Effect', xnames),
                                        paste0(ynames, '.jack'))
                  res
                })
@@ -979,27 +1008,30 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
 
       # Compute pseudo R-square with each item jackknifed "niter" times
       jack.pr2 <-
-        parallel::mclapply(1:niter,
-                           function(i){
-                             set.seed(seed+i)
-                             jackknifed.y <- lapply(1:q, function(k){
-                               y.jack <- Y
-                               y.jack[,k] <- sample(y.jack[,k], size = n,
-                                                    replace = F)
-                               y.jack
-                             })
-                             res <- lapply(jackknifed.y, function(yy){
-                               GG <- gower(stats::dist(yy, method = dtype))
-                               pseudo.r2(GG)
-                             })
-                             res <- matrix(unlist(res), nrow = p+1, ncol = q)
-                             dimnames(res) <- list(c('Omnibus', xnames),
-                                                   paste0(ynames, '.jack'))
-                             res
-                           },
-                           mc.preschedule = TRUE, mc.set.seed = TRUE,
-                           mc.silent = FALSE, mc.cores = ncores,
-                           mc.cleanup = TRUE, mc.allow.recursive = TRUE)
+        parallel::mclapply(1:niter, function(i){
+          set.seed(seed+i)
+          jackknifed.y <- lapply(1:q, function(k){
+            y.jack <- Y
+            y.jack[,k] <- sample(y.jack[,k], size = n,
+                                 replace = F)
+            y.jack
+          })
+          res <- lapply(1:q, function(k){
+            pr2.jack <- rep(NA, p+1)
+            if(k %in% y.inds){
+              GG <- gower(stats::dist(jackknifed.y[[k]], method = dtype))
+              pr2.jack <- pseudo.r2(GG)
+            }
+            pr2.jack
+          })
+          res <- matrix(unlist(res), nrow = p+1, ncol = q)
+          dimnames(res) <- list(c('Omnibus Effect', xnames),
+                                paste0(ynames, '.jack'))
+          res
+        },
+        mc.preschedule = TRUE, mc.set.seed = TRUE,
+        mc.silent = FALSE, mc.cores = ncores,
+        mc.cleanup = TRUE, mc.allow.recursive = TRUE)
 
       # Subtract the jackknifed pseudo R-squares from the real pseudo R-squares
       # to get the delta statistics for each rep
@@ -1013,7 +1045,7 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
 
     # --- Compute Median of Delta --- #
     delta.med <- matrix(0, nrow = p + 1, ncol = q)
-    dimnames(delta.med) <-  list(c('Omnibus', xnames),
+    dimnames(delta.med) <-  list(c('Omnibus Effect', xnames),
                                  paste0(ynames, '.jack'))
     for(i in 1:nrow(delta.med)){
       for(j in 1:ncol(delta.med)){
@@ -1022,7 +1054,11 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
       }
     }
 
+    # === Trim out results to only the requested X and Y variables === #
+    delta.med <- delta.med[c(1, x.inds), y.inds, drop = F]
   }
+
+
 
   # ============================================================================
   # Step 4: Computation if list of distance matrices is provided
@@ -1032,7 +1068,6 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
     # ----- Manage Input ----- #
     X <- as.matrix(X)
     xnames <- colnames(data.frame(X))
-    p <- ncol(X)
     q <- length(G.list)
 
     ynames <- names(G.list)
@@ -1040,8 +1075,6 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
       ynames <- paste0('Y', 1:q)
     }
 
-
-    n <- nrow(X)
 
     # ----- Populate delta matrices using jackknife procedure ----- #
     # Get the "real" pseudo R-square
@@ -1056,7 +1089,7 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
       # Subtract the jackknifed pseudo R-squares from the real pseudo R-squares
       # to get the delta statistics for each rep
       jack.pr2 <- apply(jack.pr2, 2, function(x){pr2 - x})
-      dimnames(jack.pr2) <- list(c('Omnibus', xnames),
+      dimnames(jack.pr2) <- list(c('Omnibus Effect', xnames),
                                  paste0(ynames, '.jack'))
     }
 
@@ -1082,12 +1115,15 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
       # Subtract the jackknifed pseudo R-squares from the real pseudo R-squares
       # to get the delta statistics for each rep
       jack.pr2 <- apply(jack.pr2, 2, function(x){pr2 - x})
-      dimnames(jack.pr2) <- list(c('Omnibus', xnames),
+      dimnames(jack.pr2) <- list(c('Omnibus Effect', xnames),
                                  paste0(ynames, '.jack'))
     }
 
     # --- In this case, there's only one rep, so the median is the single rep
     delta.med <- jack.pr2
+
+    # === Trim out results to only the requested X and Y variables === #
+    delta.med <- delta.med[c(1, x.inds),, drop = F]
   }
 
 
@@ -1095,6 +1131,20 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
   # Step 5: Plot
   # ============================================================================
   if(plot.res){
+    # Number of outcome items to display
+    q <- length(y.inds)
+    if(q == 0){
+      q <- length(G.list)
+    }
+
+    # colors
+    red <- 1
+    green <- 1
+    blue <- 1
+    if(grayscale){
+      red <- green <- blue <- 0
+    }
+
     # Case 1: Univaraite X
     if(p == 1){
       if(q == 1){
@@ -1104,40 +1154,57 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
       if(q > 1){
         graphics::plot(NA, xlim = c(0.5, q+0.5), ylim = c(0.5,p+0.5), xaxt = 'n',
                        yaxt = 'n',  xlab = '', ylab = '', bty = 'n',
-                       main = 'MDMR Effect Sizes')
-        graphics::axis(1, at = 1:q, labels = c(ynames), las = 2)
-        graphics::axis(2, at = (p):1, labels = c('Omnibus'), las = 1)
+                       main = 'MDMR Effect Sizes',
+                       cex.axis = cex, cex.lab = cex, cex = cex, cex.main = cex)
+        graphics::axis(1, at = 1:q, labels = c(ynames[y.inds]), las = y.las,
+                       cex.axis = cex, cex.lab = cex)
+        graphics::axis(2, at = (p):1, labels = c('Omnibus Effect'), las = 1,
+                       cex.axis = cex, cex.lab = cex)
 
         # --- Convert to z scores for shading --- #
         z.scores <- matrix(scale(c(delta.med[1,])), nrow = p, ncol = q)
         z.scores[delta.med[1,] < 0] <- -9999
         omni.cols <- stats::pnorm(z.scores[1,])
 
-          for(j in 1:ncol(delta.med)){
-            x.low <- j-0.5
-            y.low <- p-0.5
-            x.up <- j+0.5
-            y.up <- p+0.5
+        for(j in 1:ncol(delta.med)){
+          x.low <- j-0.5
+          y.low <- p-0.5
+          x.up <- j+0.5
+          y.up <- p+0.5
 
-              # Y importances
-              graphics::rect(x.low, y.low, x.up, y.up,
-                             col = grDevices::rgb(0, 0, 1, omni.cols[j]))
+          # Y importances
+          graphics::rect(x.low, y.low, x.up, y.up,
+                         col = grDevices::rgb(0*red, 0*green, 1*blue,
+                                              omni.cols[j]))
 
 
-            # Effect Size text
-            graphics::text(x = j, y = 1, col = 'white',
-                           labels = formatC(delta.med[1,j], format = 'g', digits = 2),
-                           cex = 0.75)
-          }
+          # Effect Size text
+          graphics::text(x = j, y = 1, col = 'white',
+                         labels = formatC(delta.med[1,j], format = 'g', digits = 2),
+                         cex = cex*0.8)
         }
+      }
     }
+
     # Case 2: Multivariate X
     if(p > 1){
+
+      # Number of conditional effects to display
+      p <- length(x.inds)
+      if(all(x.inds == 0)){
+        p <- 0
+        xnames <- NULL
+      }
+
       graphics::plot(NA, xlim = c(0.5, q+0.5), ylim = c(0.5,p+0.5+1), xaxt = 'n',
                      yaxt = 'n',  xlab = '', ylab = '', bty = 'n',
-                     main = 'MDMR Effect Sizes')
-      graphics::axis(1, at = 1:q, labels = c(ynames), las = 2)
-      graphics::axis(2, at = (p+1):1, labels = c('Omnibus', xnames), las = 1)
+                     main = 'MDMR Effect Sizes',
+                     cex.axis = cex, cex.lab = cex, cex = cex, cex.main = cex)
+      graphics::axis(1, at = 1:q, labels = c(ynames[y.inds]), las = y.las,
+                     cex.axis = cex, cex.lab = cex)
+      graphics::axis(2, at = (p+1):1, labels = c('Omnibus Effect', xnames[x.inds-1]),
+                     las = 1,
+                     cex.axis = cex, cex.lab = cex)
 
       # Convert to z scores for shading
       z.scores <- matrix(scale(c(delta.med)), nrow = p+1, ncol = q)
@@ -1155,18 +1222,20 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
           if(i == 1){
             # Y importances
             graphics::rect(x.low, y.low, x.up, y.up,
-                           col = grDevices::rgb(0, 0, 1, omni.cols[j]))
+                           col = grDevices::rgb(0*red, 0*green, 1*blue,
+                                                omni.cols[j]))
           }
           if(i > 1){
             # XY Importances
             graphics::rect(x.low, y.low, x.up, y.up,
-                           col = grDevices::rgb(0,0.75,0, pairwise.cols[i-1,j]))
+                           col = grDevices::rgb(0*red, 0.75*green, 0*blue,
+                                                pairwise.cols[i-1,j]))
           }
 
           # Effect Size text
           graphics::text(x = j, y = p - i + 1 + 1, col = 'white',
                          labels = formatC(delta.med[i,j], format = 'g', digits = 2),
-                         cex = 0.75)
+                         cex = 0.8*cex)
         }
       }
     }
@@ -1193,4 +1262,3 @@ delta <- function(X, Y = NULL, dtype = NULL, niter = 10,
 #'
 #' See package vignette by calling \code{vignette('mdmr-vignette')}.
 "Y.mdmr"
-
