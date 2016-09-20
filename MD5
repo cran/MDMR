@@ -1,12 +1,12 @@
-05cf7834fa4fbf0b64b426522c827a85 *DESCRIPTION
+92a18eda48ac45e7df35fd4ab9710fcb *DESCRIPTION
 302c84d0c786939e0ac7cf83263baa06 *NAMESPACE
 a10a9aa2de5e7aae30c83bbc3fe754c8 *R/MDMR-package.R
-ef1afe2ac6f9999ae56d73047c3ca652 *R/mdmr.R
+cc414ddab25fe8d62d5b03c72f6452c2 *R/mdmr.R
 384d2ad68cedb264f14badd33478ef05 *build/vignette.rds
 aa3cd181a2610762f87ced2824a85c98 *data/mdmrdata.RData
 54d5bfaa11c0f836e5a5e884db047c58 *inst/doc/mdmr-vignette.R
 8d017c650b3a7c7dc56bf26cf2ec2efb *inst/doc/mdmr-vignette.Rmd
-28be56b911fef4699c507529abfda122 *inst/doc/mdmr-vignette.html
+39e9fae086e8cff111ae24770f3c795f *inst/doc/mdmr-vignette.html
 7b7812e16ba8cb6ffa2f9bb744e0030e *man/MDMR-package.Rd
 c5fa0525aa33b9cb1b9ce14e688c1111 *man/X.mdmr.Rd
 644ac07d6474773afc689a74e7014df0 *man/Y.mdmr.Rd
